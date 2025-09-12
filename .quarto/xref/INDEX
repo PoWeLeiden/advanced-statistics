@@ -1,0 +1,80 @@
+{
+  "index.qmd": {
+    "index.html": "671fb349"
+  },
+  "linear_01.qmd": {
+    "linear_01.html": "199d4762"
+  },
+  "linear_02.qmd": {
+    "linear_02.html": "0eb8deb2"
+  },
+  "linear_03.qmd": {
+    "linear_03.html": "502ea827"
+  },
+  "linear_04.qmd": {
+    "linear_04.html": "dba365e5"
+  },
+  "linear_05.qmd": {
+    "linear_05.html": "5af6ea30"
+  },
+  "linear_06.qmd": {
+    "linear_06.html": "8d69964a"
+  },
+  "linear_07.qmd": {
+    "linear_07.html": "946cb453"
+  },
+  "linear_08.qmd": {
+    "linear_08.html": "544a5cfb"
+  },
+  "logit_01.qmd": {
+    "logit_01.html": "a52a79e9"
+  },
+  "logit_02.qmd": {
+    "logit_02.html": "97bc8a52"
+  },
+  "logit_03.qmd": {
+    "logit_03.html": "d384bc1b"
+  },
+  "logit_04.qmd": {
+    "logit_04.html": "fd799330"
+  },
+  "logit_05.qmd": {
+    "logit_05.html": "dc647b49"
+  },
+  "logit_06.qmd": {
+    "logit_06.html": "60e38950"
+  },
+  "interaction_01.qmd": {
+    "interaction_01.html": "176f2b7e"
+  },
+  "interaction_02.qmd": {
+    "interaction_02.html": "091e081d"
+  },
+  "interaction_03.qmd": {
+    "interaction_03.html": "d84128f9"
+  },
+  "common_errors.qmd": {
+    "common_errors.html": "59e22868"
+  },
+  "package_overview.qmd": {
+    "package_overview.html": "e3a67b5a"
+  },
+  "Formulas.qmd": {
+    "Formulas.html": "46cd458b"
+  },
+  "part_linear.qmd": {
+    "part_linear.html": "57b27e7a"
+  },
+  "part_logistic.qmd": {
+    "part_logistic.html": "dce21e1b"
+  },
+  "part_interactions.qmd": {
+    "part_interactions.html": "9222dc4b"
+  },
+  "errors.qmd": {
+    "errors.html": "51bddeee"
+  },
+  "scales.qmd": {
+    "scales.html": "ce3ed09a"
+  }
+}

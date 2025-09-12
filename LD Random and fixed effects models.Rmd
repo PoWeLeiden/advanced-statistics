@@ -1,0 +1,425 @@
+---
+title: "Overview of R functions - Random and Fixed effects models"
+author: "Leila Demarest"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    number_sections: true
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+  word_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this overview document, we demonstrate how to estimate random and fixed effects regression models when data is clustered. We first load relevant packages.
+
+```{r, message=FALSE}
+library(lme4)            #multilevel models
+library(lmerTest)        #to get p-value estimations
+library(nlme)            #linear multilevel models
+library(rio)             #loading data
+library(modelsummary)    #for creating regression tables
+library(marginaleffects) #AMEs, predictions
+library(performance)     #goodness-of-fit statistics
+library(tidyverse)       #data manipulation and plotting
+library(lattice)         #plotting
+library(plm)             #linear fixed effects models
+library(bife)            #logistic fixed effects models
+```
+
+# Multilevel models
+
+We will estimate multilevel models based on cross-national survey data. We use the full Round 9 dataset of the [European Social Survey](https://www.europeansocialsurvey.org) (ESS). This dataset is available in SPSS format (.sav) from the ESS website. Missings are already indicated as 'NA' in this dataset.
+
+```{r}
+ESS9 <- import("Data/ESS9e03.sav")
+```
+
+We also perform data management for the models to be estimated:
+
+```{r}
+ESS9 <- ESS9 |>
+  mutate(gndr_f = factorize(gndr))
+ESS9 <- ESS9 |>
+  mutate(gndr_f = droplevels(gndr_f))
+
+ESS9 <- ESS9 |>
+  mutate(vote = factorize(vote)) 
+ESS9 <- ESS9 |> 
+  mutate(vote = relevel(vote, "No"))
+ESS9 <- ESS9 |>
+  mutate(vote = na_if(vote, 
+                      "Not eligible to vote"))
+```
+
+## Merging data
+
+We consider the countries of this dataset as the cluster variable. There are 29 countries. The dataset does not contain variables at the country level. Given that multilevel models are particularly useful to test the effects of higher-level variables, we will add such a variable to the dataset: each country's Freedom House political rights score in the year the survey data was collected (2018). This data was gathered in an Excel file:
+
+```{r}
+FH <- import("Data/FHscoresESS9.xlsx")
+FH
+```
+
+In the overview of Statistics 1, Week 7, you find further explanation on how to merge data with the `dplyr` package and `full_join` function. This example uses the same code given the syntax can also be used to match 1 variable (FH score) to many observations (all survey respondents from a particular country).
+
+```{r}
+ESS9merged <- full_join(x = ESS9, 
+                         y = FH, 
+                         by = c("cntry"))
+```
+
+## Random intercept models
+
+When estimating multilevel models, we generally include the level 1 predictors before including higher level predictors. In a second step, we can add the latter.
+
+### Linear model
+
+Here we estimate a linear model in which we predict trust in the country's parliament (*trstprl*) with gender (*gndr*), trust in people (*ppltrst*), and use of internet (*netusoft*). Our country-level predictor will be the FH political rights score.
+
+We make use of the [lme4](https://cran.r-project.org/web/packages/lme4/index.html) package and the `lmer` function specifically. The code `(1 | cntry)` defines the nested stucture. The general summary output only contains the t-values from which p-values are derived (t-value \>1.96 indicates significance at 95% level), but when `lmerTest` is loaded (as is the case here), you also get the p-values.
+
+```{r}
+model1 <- lmer(trstprl ~ gndr_f + ppltrst + netusoft +
+                (1 | cntry), data=ESS9merged)
+summary(model1)
+
+model2 <- lmer(trstprl ~ gndr_f + ppltrst + netusoft + FHscore +
+                (1 | cntry), data=ESS9merged)
+summary(model2)
+```
+
+### Logistic model
+
+For logistic models, we use the `glmer` function. Here we predict turnout (*vote*).
+
+```{r}
+modellog1 <- glmer(vote ~ gndr_f + ppltrst + netusoft +
+                    (1 | cntry), family = binomial, data=ESS9merged)
+summary(modellog1)
+
+modellog2 <- glmer(vote ~ gndr_f + ppltrst + netusoft + FHscore +
+                    (1 | cntry), family = binomial, data=ESS9merged)
+summary(modellog2)
+```
+
+### Adding survey weights
+
+It is possible (and in this case actually necessary) to add weights to the syntax as follows:
+
+```{r}
+model2w <- lmer(trstprl ~ gndr_f + agea +
+                  ppltrst + netusoft + FHscore +
+                (1 | cntry), data=ESS9merged, weights = pspwght)
+summary(model2w)
+```
+
+## Random slopes models
+
+To estimate random slopes models we add the variable for which we want slopes to vary across countries to the nested structure specification: `(1 + VAR| cntry)`. For the linear and logistic models estimated we use trust in people (*ppltrst*) as the random slope variable. In random slopes models, it is necessary to center the continuous predictors, in particular the predictors for which we expect random slopes.
+
+```{r}
+#linear model (continuous predictors centred)
+modellins <- lmer(trstprl ~ gndr_f + 
+                    scale(ppltrst,scale=F) + 
+                    scale(netusoft,scale=F) + 
+                    scale(FHscore, scale=F) +
+                    (1 + scale(ppltrst,scale=F) | cntry), 
+                  data=ESS9merged)
+summary(modellins)
+
+```
+
+```{r}
+#logistic model (continuous predictors centred)
+modellogs <- glmer(vote ~ gndr_f +
+                   scale(ppltrst,scale=F) +
+                   scale(netusoft,scale=F) +
+                   scale(FHscore, scale=F) +
+                   (1 + scale(ppltrst,scale=F) | cntry), 
+                   family = binomial, data=ESS9merged, 
+                   )
+summary(modellogs)
+```
+
+## Interactions
+
+Single-level and cross-level interactions can be added using the `*`sign.
+
+```{r}
+#single level
+model2int <- lmer(trstprl ~ gndr_f * ppltrst + netusoft + FHscore +
+                (1 | cntry), data=ESS9merged)
+summary(model2int)
+
+
+#cross-level
+model2clint <- lmer(trstprl ~ gndr_f +  netusoft + ppltrst*FHscore +
+                (1 | cntry), data=ESS9merged)
+summary(model2clint)
+```
+
+## Variance and ICC
+
+Besides estimating effects of predictors at different levels of the nested structure, multilevel models are often used to assess how much of the variation in the dependent variable is situated at different levels and the extent to which observations in a cluster correlate (Intra-Cluster Correlation or ICC).
+
+To assess how much of the variation in the dependent variable is situated at different levels we make use of a null model. Adding level 1 predictors can change the estimated variation at both level 1 and higher levels. Higher level predictors can only change the estimated variation at higher levels. To assess how the inclusion of predictors affects variation estimates, it is important to use complete cases analysis so the N of models remains the same.
+
+```{r}
+ESS9_completelin <- ESS9merged |>
+  filter(complete.cases(trstprl, gndr_f, ppltrst, netusoft))
+ESS9_completelog <- ESS9merged |>
+  filter(complete.cases(vote, gndr_f, ppltrst, netusoft))
+```
+
+We now estimate different nested linear and logistic (random intercepts) models:
+
+```{r}
+#linear
+model0 <- lmer(trstprl ~ 1 +
+                (1 | cntry), data=ESS9_completelin)
+
+model1 <- lmer(trstprl ~ gndr_f + ppltrst + netusoft +
+                (1 | cntry), data=ESS9_completelin)
+
+model2 <- lmer(trstprl ~ gndr_f + ppltrst + netusoft + FHscore +
+                (1 | cntry), data=ESS9_completelin)
+
+```
+
+```{r}
+#logistic
+modellog0 <- glmer(vote ~ 1 +
+                    (1 | cntry), family = binomial, 
+                   data=ESS9_completelog)
+
+modellog1 <- glmer(vote ~ gndr_f + ppltrst + netusoft +
+                    (1 | cntry), family = binomial, 
+                   data=ESS9_completelog)
+
+modellog2 <- glmer(vote ~ gndr_f + ppltrst + netusoft + FHscore +
+                    (1 | cntry), family = binomial, 
+                   data=ESS9_completelog)
+```
+
+The level 1 and level 2 variances can be found in the `summary` output and compared. Note that with logistic models, the level 1 variance cannot be estimated (only approximated).
+
+We can use the `performance` package with the `icc` function to estimate the icc for each model. The adjusted ICC in the output is the standard one (= cluster-level variance/total variance). For logistic models, the level 1 variance is estimated as 3.29.
+
+```{r}
+#linear
+icc(model0)
+icc(model1)
+icc(model2)
+
+#logistic
+icc(modellog0)
+icc(modellog1)
+icc(modellog2)
+```
+
+## Model comparisons
+
+To compare models, we can use the likelihood ratio test. For example, here we compare the random slopes model with the simpler random intercepts model to assess whether random slopes provide better fit. Note that we have to refit the models now using the same scaled predictors and underlying data to make the models nested. In addition we have to use the maximum likelihood (ML) and not the restricted maximum likelihood estimator (REML).
+
+```{r}
+model2 <- lmer(trstprl ~ gndr_f + scale(ppltrst,scale=F)
+               + scale(netusoft,scale=F) + scale(FHscore, scale=F) +
+                 (1 | cntry),  REML = F,
+               data=ESS9merged)
+
+modellins <- lmer(trstprl ~ gndr_f + 
+                    scale(ppltrst,scale=F) + 
+                    scale(netusoft,scale=F) + 
+                    scale(FHscore, scale=F) +
+                    (1 + scale(ppltrst,scale=F) | cntry), REML = F,
+                  data=ESS9merged)
+
+test_likelihoodratio(model2,
+                     modellins)
+```
+
+## AMEs and predictions
+
+The `lmer` package is compatible with the `marginaleffects` package to calculate AMEs, slopes at certain values of a moderator variable, and predictions.[^1]
+
+[^1]: If you scale a variable within the regression syntax, you can get a warning, but this does not affect results.
+
+For example, we can use the cross-level interaction model and calculate the slope of trust in people at different Freedom House scores, and plot this.
+
+```{r}
+slopes(model2clint, 
+       variables = "ppltrst", 
+       newdata = datagrid(FHscore = seq(from=1, to =7, by=1))) |> 
+  ggplot(aes(x=FHscore, y=estimate)) + 
+  geom_line() + 
+  geom_ribbon(aes(ymin=conf.low, ymax=conf.high), alpha = 0.2) + 
+  labs(title = "Marginal effect of trust in people on trust in parliament" ,
+       y = "Marginal effect", 
+       x = "Freedom House score (higher = less free)") + 
+  scale_x_continuous(breaks=c(1,2,3,4,5,6,7))
+```
+
+To find out how our countries compare to each other, it is also common to make a caterpillar plot based on the model (using the function `dotplot` from `lattice` or using `ggplot)`.
+
+```{r}
+#dotplot with lattice
+dotplot(ranef(model2, which = "cntry", condVar = TRUE))
+```
+
+```{r}
+#ggplot with formatting
+ranef2_stored <- data.frame(ranef(model2, which = "cntry",
+                                  condVar = TRUE))
+ggplot(ranef2_stored, aes(x = condval, y= grp)) +
+  geom_pointrange(aes(xmin = condval - (1.96*condsd), xmax = condval + (1.96*condsd)), size = 0.3) +
+  labs(title = "Difference from grand mean intercept by country", 
+       y = "Conditional variance", 
+       x = "Country") +
+geom_vline(xintercept=0, linetype="dashed", color="black")+
+  theme(axis.text = element_text(size = 7))
+```
+
+## Regression tables
+
+The `lmer`package is also compatible with `modelsummary`.
+
+```{r}
+#linear random slopes model
+modelsummary(modellins,                        
+             stars = TRUE,                  
+             coef_rename = c(               
+               "(Intercept)" = "Intercept",
+               "gndr_fFemale" = "Female respondent",
+               "scale(ppltrst, scale = F)" = "Trust in people (centr.)",
+               "scale(netusoft, scale = F)" = "Use of internet (centr.)",
+               "scale(FHscore, scale = F)" = "Political Rights score (centr.)",
+               "SD (Intercept cntry)" = "SD (Intercept Country)",
+               "SD (scale(ppltrst, scale = F) cntry)" =  "SD (Trust in people (centr.))",
+               "Cor (Intercept~scale(ppltrst, scale = F) cntry)" = "Cor (Intercept Country ~ Trust in people (centr.))"),
+               title = "Predicting Trust in Parliament (ESS9)",
+               notes = ("Linear multilevel regression coefficients with standard errors in parentheses"))
+```
+
+```{r}
+#logistic random intercepts model
+modelsummary(modellog2,
+             stars = TRUE,
+             coef_rename = c("(Intercept)" = "Intercept",
+               "gndr_fFemale" = "Female respondent",
+               "ppltrst" = "Trust in people",
+               "netusoft" = "Use of internet",
+               "FHscore" = "Political Rights score",
+               "SD (Intercept cntry)" = "SD (Intercept Country)"),
+             title = "Turnout in Europe (ESS9)",
+             notes = ("multilevel logistic regression coefficients with with standard errors in parentheses"))
+```
+
+## Estimation troubles
+
+Some multilevel models can have difficulties with estimation. For example, we add an age predictor (*agea*) to some of our above estimated models. The age predictor is dispersed quite differently from the other predictors, which can cause problems. Several strategies can be used to overcome these issues.[^2]
+
+[^2]: In principle, one could also divide the age variable by 10 so that an increase of 1 unit indicates an increase of 10 years. This does not affect the findings as such but reduces dispersion.
+
+```{r}
+modellins2a <- lmer(trstprl ~ gndr_f + 
+                    scale(agea,scale=F) +
+                    scale(ppltrst,scale=F) + 
+                    scale(netusoft,scale=F) + 
+                    scale(FHscore, scale=F) +
+                    (1 + scale(ppltrst,scale=F) | cntry), 
+                  data=ESS9merged)
+summary(modellins2a)
+```
+
+Adding the age predictor leads to the linear random slopes model leads to the warning "Warning: Model failed to converge with...". One solution is to compare findings with standardized variables. The coefficients are less intuitive, but if significance and direction of effects are similar, one can rely more on the initial results regardless of the warning.
+
+```{r}
+modellins2b <- lmer(trstprl ~ gndr_f + 
+                    scale(agea,scale=T) +
+                    scale(ppltrst,scale=T) + 
+                    scale(netusoft,scale=T) + 
+                    scale(FHscore, scale=T) +
+                    (1 + scale(ppltrst,scale=T) | cntry), 
+                  data=ESS9merged)
+summary(modellins2b)
+```
+
+Another strategy is to compare findings with those achieved with a different R package: [nlme](https://cran.r-project.org/web/packages/nlme/index.html). To avoid errors, we must use a complete cases dataset. Also, we cannot center within the regression syntax and have to do this by recoding the variables (after subsetting the complete dataset).
+
+```{ESS9_completelin2 <- ESS9merged |>}
+  filter(complete.cases(trstprl, gndr_f, ppltrst, agea, netusoft))
+
+ESS9_completelin2 <- ESS9_completelin2 |>
+  mutate(ageaC = scale(agea,scale=F),
+          ppltrstC = scale(ppltrst,scale=F), 
+          netusoftC = scale(netusoft,scale=F), 
+          FHscoreC = scale(FHscore, scale=F))
+
+modellins2c <- lme(trstprl ~ gndr_f + 
+                     ageaC +
+                     ppltrstC + 
+                     netusoftC + 
+                     FHscoreC,
+                     random  = ~ ppltrstC | cntry, 
+                    data=ESS9_completelin2)
+summary(modellins2c)
+```
+
+For logistic models using `glmer,` one can also change the estimation method (`optimizer`) and increase the maximum number of iterations (`nAGQ`) via `glmercontrol`.
+
+```{r}
+modellog_opt <- glmer(vote ~ gndr_f + scale(agea,scale=T) 
+                   + scale(ppltrst,scale=T) + scale(netusoft,scale=T) +                           scale(FHscore, scale=T) +
+                    (1 | cntry), family = binomial, data=ESS9merged, 
+                   control = glmerControl(optimizer = "bobyqa"), nAGQ = 10)
+summary(modellog_opt)
+```
+
+# Fixed effects models
+
+For this example, we use replication data from:
+
+Miguel, E., Satyanath, S., & Sergenti, E. (2004). Economic shocks and civil conflict: An instrumental variables approach. *Journal of political Economy*, *112*(4), 725-753.
+
+```{r}
+MSS <- import("Data/Miguel et al, 2004.sav")
+```
+
+We estimate a linear modelling predicting economic growth based on rainfall growth, adding country dummies (by factorizing).
+
+```{r}
+MSS <- MSS |>
+  mutate(country_name_f = factorize(country_name))
+model_growth <- lm(gdp_g ~ NCEP_g + country_name_f, data= MSS)
+summary(model_growth)
+```
+
+We can use the [plm](https://cran.r-project.org/web/packages/plm/) package as well to have less bulky output:
+
+```{r}
+model_growth2 <- plm(gdp_g ~ NCEP_g, 
+                      data = MSS,
+                      index = c("country_name_f"), 
+                      model = "within")
+summary(model_growth2)
+```
+
+Note that we cannot use the package `pglm` in a similar way for logistic models. Instead, we use the [bife](https://cran.r-project.org/web/packages/bife/vignettes/howto.html) package to estimate how growth impacts conflict onset:
+
+```{r}
+model_conflict <- bife(war_prio ~ gdp_g | country_name_f, 
+                       data = MSS)
+summary(model_conflict)
+
+model_conflict_bc <- bias_corr(model_conflict)
+summary(model_conflict_bc)
+```

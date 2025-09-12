@@ -1,0 +1,302 @@
+---
+title: 'Overview of R functions - Regression analyses: extensions'
+author: "Leila Demarest"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    number_sections: true
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+  word_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+# Introduction
+
+Linear (OLS) and logistic regression are some of the most commonly used forms of regression analysis in social sciences, but they are not the only ones. In this overview, we explain how to conduct the following additional forms of regression in R:
+
+-   Multinomial regression
+
+-   Ordinal regression
+
+-   Poisson regression
+
+-   Negative binomial regression
+
+Much like logistic regression, none of the coefficients of these forms of regression analyses can be interpreted in a straightforward manner (as is the case with OLS). This is why interpreting their results is best done via tools such as Average Marginal Effects (AME) and predictions.
+
+We first load some general packages to work with:
+
+```{r}
+#general packages
+library(nnet)            #for multinomial regression
+library(MASS)            #for ordinal regression
+library(brant)           #test proportional odds
+library(rio)             #loading data
+library(modelsummary)    #for creating regression tables
+library(marginaleffects) #calculating predicted values
+library(tidyverse)       #data manipulation and plotting
+library(performance)
+library(broom)          # tidying
+
+```
+
+# Multinomial regression
+
+We use the Netherlands Round 9 dataset of the [European Social Survey](https://www.europeansocialsurvey.org) (ESS). This dataset is available in SPSS format (.sav) from the ESS website. Missings are already indicated as 'NA' in this dataset.
+
+```{r}
+ESS9NL <- import("Data/ESS9e03, Netherlands.sav")
+```
+
+For this example, we use the dependent variable political interest (*polintr*) which has 4 answer categories: very interested, quite interested, hardly interested, not at all interested. The variable can be considered an ordinal one. While multinomial regression is specifically useful for nominal variables, it is often also used as a robustness check for ordinal regression. We will use the same dependent variable for the ordinal regression example below.
+
+We use the following independent variables: gender (*gndr*), age (*agea*), education in years (*eduyrs*). We first do necessary data management. The reference category for the political interest variable will be 'very interested' (category 1).
+
+```{r}
+ESS9NL <- ESS9NL |>
+  mutate(gndr_f = factorize(gndr),
+         polintr_f = factorize(polintr, ordered =TRUE))
+
+ESS9NL <- ESS9NL |>
+  mutate(gndr_f = droplevels(gndr_f),
+         polintr_f = droplevels(polintr_f))
+
+```
+
+## Modelling
+
+Then we conduct the multinomial regression relying on `multinom` function from the [nnet package](https://cran.r-project.org/web/packages/nnet/index.html) and investigate the result with summary. One drawback of this function is that p-values are not reported in the summary, but we can rely on `tidy` here. If we want to, we can also use tidy to exponentiate the logistic regression coefficients to odds ratios (`modelsummary` can also be used for this, see below).
+
+```{r}
+model_mn <- multinom(polintr_f ~ gndr_f + agea + eduyrs, data = ESS9NL) 
+summary(model_mn)
+tidy(model_mn, conf.level = 0.95)
+```
+
+The coefficients show whether higher values of the independent variable increase/decrease the probability of belonging in the specified category versus the reference category (Very interested). For instance, we find (as can be expected) that higher education levels decrease the probability of being in the quite/hardly/not at all interested groups versus the very 'interested' group.
+
+## AMEs and predictions
+
+To find out how each independent variable affects the probability of a respondent to belong in each of the 4 answer categories (rather than compared versus the reference category), the average marginal effects can be calculated:
+
+```{r}
+AME <- avg_slopes(model_mn,
+                  conf_level = 0.95)
+tibble(AME)
+```
+
+Another option to help you understand findings better is to calculate (and plot) predictions:
+
+```{r}
+#categorical predictor
+Pred_cat <- predictions(model_mn,
+                        by="gndr_f", newdata = "mean") 
+tibble(Pred_cat)
+```
+
+```{r}
+#logical ordering of dependent variable categories
+Pred_cat <- Pred_cat |>
+  mutate(group=factor(group, levels=c("Very interested", "Quite interested", "Hardly interested", "Not at all interested")))
+levels(Pred_cat$group)
+
+```
+
+```{r}
+#plotting with facet categorical predictor
+ggplot(Pred_cat, aes(x= gndr_f, y= estimate)) +   
+  geom_pointrange(aes(ymin=conf.low, ymax=conf.high)) + 
+    facet_grid(cols = vars(group)) +
+  labs(title = "Gender and Political Interest in the Netherlands", 
+       x = "Gender",
+       y = "Predicted probability") +
+  geom_text(aes(label = round(estimate, 2)), hjust = -0.25)
+```
+
+```{r}
+#continuous predictor
+Pred_cont <- predictions(model_mn,
+                    newdata = datagrid(eduyrs = seq(from=5,to=30,by=5))) 
+tibble(Pred_cont)
+```
+
+```{r}
+#logical ordering of dependent variable categories
+Pred_cont <- Pred_cont |>
+  mutate(group=factor(group, levels=c("Very interested", "Quite interested", "Hardly interested", "Not at all interested")))
+levels(Pred_cont$group)
+
+#plotting with facet continuous predictor
+ggplot(Pred_cont, aes(x= eduyrs, y= estimate)) +   
+  geom_line() +                                         
+  geom_ribbon(aes(ymin=conf.low, ymax=conf.high), alpha = 0.2) +
+  facet_grid(rows = vars(group)) +
+  labs(title = "Education and Political Interest in the Netherlands", 
+       x = "Education in years",
+       y = "Predicted probability") +
+  geom_text(aes(label = round(estimate, 2)), vjust = -0.3)
+```
+
+## Regression table
+
+The multinomial model as fitted here can be combined with `modelsummary` to produce a regression table. The code requires some adjustments given that there are multiple dependent categories and multiple coefficients per individual variable. The inclusion of the `shape` function is important here (for more information, see [here](https://modelsummary.com/articles/modelsummary.html#shape-pivot-groups-panels-and-stacks)).
+
+```{r}
+modelsummary(model_mn, 
+             stars = TRUE,
+             shape = model + term ~ response,
+             coef_rename = c("(Intercept)" = "Constant",
+                             "agea" = "Age",
+                             "gndr_fFemale" = "Female respondent",
+                             "eduyrs" = "Education in years"),
+              gof_map = c("nobs", "logLik"),
+             title = "Political Interest in the Netherlands (ESS9)",
+             notes = ("Multinomial logistic regression coefficients with standard errors in parentheses. Reference category dependent variable = Very interested"))
+```
+
+# Ordinal regression
+
+## Modelling
+
+We will now use the same dependent and independent variables to fit an ordinal regression model using `polr` function from the [MASS package](https://cran.r-project.org/web/packages/MASS/index.html). Note that the political interest variable is ordered with the highest level indicating 'not at all interested'.
+
+```{r}
+model_or <- polr(polintr_f ~ gndr_f + agea + eduyrs, data = ESS9NL) 
+summary(model_or)
+```
+
+The logistic regression coefficient for education here indicates that if education is higher, it is less likely respondents have a high score on the ordinal variable (with higher indicating less interest). The summary function estimates the t-values that can be used to determine the significance. Getting the p-values is more tricky. It can be done with tidy, but only when using a complete cases dataset.
+
+```{r}
+ESS9NL_or <- ESS9NL |>
+  filter(complete.cases(polintr_f, gndr_f, agea,  eduyrs))
+model_or <- polr(polintr_f ~ gndr_f + agea + eduyrs, data = ESS9NL_or) 
+tidy(model_or, conf.level = 0.95, p.values = TRUE)
+```
+
+With ordinal regression it is important to test whether the assumption of proportional odds holds. We can use the Brant test from the [Brant package](https://cran.r-project.org/web/packages/brant/index.html).
+
+```{r}
+brant(model_or)
+```
+
+## AMEs and predictions
+
+For average marginal effects and predictions we can use the same code as we used for multinomial models. Given that the outcome variable is categorical, we also receive output for each group of the dependent variable (see also [here](https://marginaleffects.com/vignettes/categorical.html)).
+
+## Regression table
+
+The ordinal model as fitted here can also be combined with `modelsummary` to produce a regression table:
+
+```{r}
+modelsummary(model_or, 
+             stars = TRUE,
+             coef_rename = c("(Intercept)" = "Constant",
+                             "agea" = "Age",
+                             "gndr_fFemale" = "Female respondent",
+                             "eduyrs" = "Education in years"),
+             gof_map = c("nobs", "logLik"),
+             title = "Political Interest in the Netherlands (ESS9)",
+             notes = ("ordinal logistic regression coefficients with standard errors in parentheses."))
+```
+
+# Poisson regression
+
+## Modelling
+
+Poisson regression is used to model count dependent variables. We will use a simplified dataset on Nigerian lawmakers' parliamentary behaviour (Demarest, 2022[^1]) and use the number of bills sponsored by Members of Parliament as the dependent variable. As independent variables, we use a binary indicator for the chamber, gender, and age.
+
+[^1]: Demarest, L. (2022). Elite clientelism in Nigeria: The role of parties in weakening legislator-voter ties. *Party Politics*, *28*(5), 939-953.
+
+```{r}
+NigMP <- import("Data/NASS_Nigeria, Demarest.dta")
+NigMP <- NigMP |>
+  mutate(Senate = factor(Senate),
+         Female = factor(Female))
+```
+
+Poisson models can be estimated with the built-in `glm` function.
+
+```{r}
+model_p <- glm(Bills ~ Senate + Female + Age_2015, family="poisson", data=NigMP)
+summary(model_p)
+```
+
+The Poisson regression coefficients are estimated in log counts, with the exponentiated coefficients termed 'incident rates'. In general terms, we can say Senators sponsor more bills, as do women.
+
+## AMEs and predictions
+
+For count models as well, the average marginal effects and predictions are often helpful to understand coefficients better.
+
+```{r}
+AME <- avg_slopes(model_p,
+                  conf_level = 0.95)
+tibble(AME)
+```
+
+The estimates tell us that female lawmakers sponsor, on average 2.5 bills more. We can also see this when we inspect the predicted counts according to the model:
+
+```{r}
+#categorical predictor
+Pred_cat <- predictions(model_p,
+                        by="Female", newdata = "mean") 
+tibble(Pred_cat)
+```
+
+For plotting and continuous predictors, the syntax used for multiple linear and logistic regression (Statistics 2, week 3 and week 6) can be used.
+
+## Regression table
+
+The Poisson model can be combined with `modelsummary`:
+
+```{r}
+modelsummary(model_p, 
+             stars = TRUE,
+             coef_rename = c("(Intercept)" = "Constant",
+                             "Age_2015" = "Age",
+                             "Female1" = "Female MP",
+                             "Senate1" = "Senator (Ref. = House member)"),
+             gof_map = c("nobs", "logLik"),
+             title = "Bill sponsorship in Nigeria",
+             notes = ("Poisson regression coefficients with standard errors in parentheses."))
+```
+
+# Negative binomial regression
+
+## Modelling
+
+Negative binomial regression are also used for count dependent variables, in particular when the count data is overdispersed: the (conditional) variance is greater than the mean.[^2]
+
+[^2]: Here we inspect the unconditional mean and variance as a shorthand relying on the assumption that the conditional mean and variance will be relatively similar. Note that we did not use a complete cases dataset as only a limited number of cases are listwise deleted when modelling. The LRT test between poisson and negative binomial regression is the easiest method to check which one to use.
+
+```{r}
+summary(NigMP$Bills)
+var(NigMP$Bills, na.rm = TRUE)
+```
+
+We will now fit the same model as before but with negative binomial regression for which we use the `glm.nb`function from the [MASS package](https://cran.r-project.org/web/packages/MASS/index.html).
+
+```{r}
+model_nb <- glm.nb(Bills ~ Senate + Female + Age_2015, data=NigMP)
+summary(model_nb)
+```
+
+We can compare this model with the Poisson model with a likelihood ratio test:
+
+```{r}
+test_likelihoodratio(model_p,
+                     model_nb)
+```
+
+AMEs, predictions, and regression tables can be achieved with the same code as used for Poisson regression.
